@@ -25,6 +25,8 @@ parser.add_argument('--dehaze_dir', type=str, default='data/Train/Dehaze/',
                     help='where training images of dehazing saves.')
 parser.add_argument('--output_path', type=str, default="output/", help='output save path')
 parser.add_argument('--ckpt_path', type=str, default="ckpt/Denoise/", help='checkpoint save path')
+parser.add_argument('--dataset_path', type=str, default='/home/student_server/Qtt/NAFNet/data', help='root path for paired blind dataset (train_blur etc)')
+parser.add_argument('--use_blind_pairs', type=bool, default=False, help='If true, use BlindPairedTrainDataset for training')
 parser.add_argument("--wblogger",type=str,default="promptir",help = "Determine to log to wandb or not and the project name")
 parser.add_argument("--ckpt_dir",type=str,default="train_ckpt",help = "Name of the Directory where the checkpoint is to be saved")
 parser.add_argument("--num_gpus",type=int,default= 4,help = "Number of GPUs to use for training")

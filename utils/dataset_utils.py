@@ -175,6 +175,71 @@ class PromptTrainDataset(Dataset):
         return len(self.sample_ids)
 
 
+class BlindPairedTrainDataset(Dataset):
+    """Training dataset that reads paired degraded (with blind pixels) and clean images.
+    Expects directory structure under a root: train_blur/ and train_sharp/ with matching filenames.
+    Optionally uses train_mask/ for masks but training currently ignores mask except for potential future use.
+    """
+    def __init__(self, args, root=None):
+        super(BlindPairedTrainDataset, self).__init__()
+        self.args = args
+        if root is None:
+            root = getattr(args, 'dataset_path', None)
+        if root is None:
+            raise ValueError('BlindPairedTrainDataset requires `root` or args.dataset_path')
+
+        self.clean_dir = os.path.join(root, 'train_sharp')
+        self.degrad_dir = os.path.join(root, 'train_blur')
+        self.mask_dir = os.path.join(root, 'train_mask')
+
+        self.clean_list = sorted([f for f in os.listdir(self.clean_dir) if f.lower().endswith(('.png', '.jpg', '.jpeg'))])
+        # keep only those files that also exist in degraded dir
+        self.clean_list = [f for f in self.clean_list if os.path.exists(os.path.join(self.degrad_dir, f))]
+
+        if len(self.clean_list) == 0:
+            raise RuntimeError('No paired images found in {} and {}'.format(self.clean_dir, self.degrad_dir))
+
+        self.toTensor = ToTensor()
+        self.crop_transform = Compose([
+            ToPILImage(),
+            RandomCrop(args.patch_size),
+        ])
+
+    def __len__(self):
+        return len(self.clean_list)
+
+    def __getitem__(self, idx):
+        fname = self.clean_list[idx]
+        clean_path = os.path.join(self.clean_dir, fname)
+        degrad_path = os.path.join(self.degrad_dir, fname)
+
+        clean_img = crop_img(np.array(Image.open(clean_path).convert('RGB')), base=16)
+        degrad_img = crop_img(np.array(Image.open(degrad_path).convert('RGB')), base=16)
+
+        clean_patch, degrad_patch = self._crop_pair(clean_img, degrad_img)
+
+        clean_patch = random_augmentation(clean_patch)[0]
+        degrad_patch = random_augmentation(degrad_patch)[0]
+
+        clean_patch = self.toTensor(clean_patch)
+        degrad_patch = self.toTensor(degrad_patch)
+
+        clean_name = os.path.splitext(fname)[0]
+
+        return [clean_name, 0], degrad_patch, clean_patch
+
+    def _crop_pair(self, img1, img2):
+        H = img1.shape[0]
+        W = img1.shape[1]
+        ind_H = random.randint(0, H - self.args.patch_size)
+        ind_W = random.randint(0, W - self.args.patch_size)
+
+        patch_1 = img1[ind_H:ind_H + self.args.patch_size, ind_W:ind_W + self.args.patch_size]
+        patch_2 = img2[ind_H:ind_H + self.args.patch_size, ind_W:ind_W + self.args.patch_size]
+
+        return patch_1, patch_2
+
+
 class DenoiseTestDataset(Dataset):
     def __init__(self, args):
         super(DenoiseTestDataset, self).__init__()
@@ -336,6 +401,57 @@ class TestSpecificDataset(Dataset):
         degraded_img = self.toTensor(degraded_img)
 
         return [name], degraded_img
+
+    def __len__(self):
+        return self.num_img
+
+
+class BlindPixelTestDataset(Dataset):
+    """Dataset for blind-pixel test sets where inputs are degraded images with fixed bad pixels.
+    Expects a root directory containing image files. Returns tuple ([name], degraded_img, None)
+    """
+    def __init__(self, args, root=None):
+        super(BlindPixelTestDataset, self).__init__()
+        self.args = args
+        # allow explicit root override, otherwise use args.blind_path if present
+        if root is not None:
+            self.root = root
+        else:
+            self.root = getattr(args, 'blind_path', None)
+            if self.root is None:
+                raise ValueError('BlindPixelTestDataset requires `root` or `args.blind_path`')
+
+        self.degraded_ids = []
+        self._init_clean_ids(self.root)
+        self.toTensor = ToTensor()
+
+    def _init_clean_ids(self, root):
+        extensions = ['jpg', 'JPG', 'png', 'PNG', 'jpeg', 'JPEG', 'bmp', 'BMP']
+        if os.path.isdir(root):
+            name_list = []
+            for image_file in os.listdir(root):
+                if any([image_file.endswith(ext) for ext in extensions]):
+                    name_list.append(image_file)
+            if len(name_list) == 0:
+                raise Exception('The input directory does not contain any image files')
+            self.degraded_ids += [os.path.join(root, id_) for id_ in name_list]
+        else:
+            if any([root.endswith(ext) for ext in extensions]):
+                name_list = [root]
+            else:
+                raise Exception('Please pass an Image file')
+            self.degraded_ids = name_list
+        print("Total Blind Images : {}".format(len(self.degraded_ids)))
+
+        self.num_img = len(self.degraded_ids)
+
+    def __getitem__(self, idx):
+        degraded_img = crop_img(np.array(Image.open(self.degraded_ids[idx]).convert('RGB')), base=16)
+        name = os.path.basename(self.degraded_ids[idx])[:-4]
+
+        degraded_img = self.toTensor(degraded_img)
+
+        return [name], degraded_img, None
 
     def __len__(self):
         return self.num_img

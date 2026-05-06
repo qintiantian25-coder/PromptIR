@@ -6,7 +6,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 
-from utils.dataset_utils import PromptTrainDataset
+from utils.dataset_utils import PromptTrainDataset, BlindPairedTrainDataset
 from net.model import PromptIR
 from utils.schedulers import LinearWarmupCosineAnnealingLR
 import numpy as np
@@ -60,7 +60,11 @@ def main():
     else:
         logger = TensorBoardLogger(save_dir = "logs/")
 
-    trainset = PromptTrainDataset(opt)
+    if getattr(opt, 'use_blind_pairs', False):
+        print('Using BlindPairedTrainDataset from', opt.dataset_path)
+        trainset = BlindPairedTrainDataset(opt, root=opt.dataset_path)
+    else:
+        trainset = PromptTrainDataset(opt)
     checkpoint_callback = ModelCheckpoint(dirpath = opt.ckpt_dir,every_n_epochs = 1,save_top_k=-1)
     trainloader = DataLoader(trainset, batch_size=opt.batch_size, pin_memory=True, shuffle=True,
                              drop_last=True, num_workers=opt.num_workers)
