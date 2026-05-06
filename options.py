@@ -31,5 +31,11 @@ parser.add_argument("--wblogger",type=str,default="promptir",help = "Determine t
 parser.add_argument("--ckpt_dir",type=str,default="train_ckpt",help = "Name of the Directory where the checkpoint is to be saved")
 parser.add_argument("--num_gpus",type=int,default= 4,help = "Number of GPUs to use for training")
 
+# validation
+parser.add_argument('--val_interval', type=int, default=20, help='Validation every N epochs')
+parser.add_argument('--val_blur_dir', type=str, default='', help='validation blur/degraded images directory')
+parser.add_argument('--val_sharp_dir', type=str, default='', help='validation ground truth clean images directory')
+parser.add_argument('--best_model_path', type=str, default='best_model.ckpt', help='save path for best model based on PSNR')
+
 options = parser.parse_args()
 

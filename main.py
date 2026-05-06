@@ -10,6 +10,7 @@ def build_train_cmd(cfg):
     args = ['python', 'train.py']
     train_cfg = cfg['train'] if 'train' in cfg else {}
     paths = cfg['paths'] if 'paths' in cfg else {}
+    val_cfg = cfg['validation'] if 'validation' in cfg else {}
 
     def add_flag(name, val):
         if val is None:
@@ -31,6 +32,12 @@ def build_train_cmd(cfg):
     # additional optional flags
     if 'wblogger' in train_cfg:
         add_flag('wblogger', train_cfg.get('wblogger'))
+
+    # validation flags
+    add_flag('val_interval', val_cfg.get('val_interval', None))
+    add_flag('val_blur_dir', val_cfg.get('val_blur_dir', None))
+    add_flag('val_sharp_dir', val_cfg.get('val_sharp_dir', None))
+    add_flag('best_model_path', val_cfg.get('best_model_path', None))
 
     return args
 

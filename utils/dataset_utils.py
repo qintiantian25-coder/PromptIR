@@ -455,5 +455,41 @@ class BlindPixelTestDataset(Dataset):
 
     def __len__(self):
         return self.num_img
+
+
+class ValidationDataset(Dataset):
+    """Dataset for validation: reads paired degraded and clean images from directories."""
+    def __init__(self, val_blur_dir, val_sharp_dir):
+        super(ValidationDataset, self).__init__()
+        self.val_blur_dir = val_blur_dir
+        self.val_sharp_dir = val_sharp_dir
+        self.image_names = []
+
+        # load filenames from sharp (ground truth) directory
+        if os.path.isdir(val_sharp_dir):
+            for f in os.listdir(val_sharp_dir):
+                if f.lower().endswith(('.png', '.jpg', '.jpeg')):
+                    self.image_names.append(f)
+
+        self.toTensor = ToTensor()
+
+    def __len__(self):
+        return len(self.image_names)
+
+    def __getitem__(self, idx):
+        fname = self.image_names[idx]
+        blur_path = os.path.join(self.val_blur_dir, fname)
+        sharp_path = os.path.join(self.val_sharp_dir, fname)
+
+        if not os.path.exists(blur_path) or not os.path.exists(sharp_path):
+            raise FileNotFoundError(f'Missing pair for {fname}')
+
+        blur_img = crop_img(np.array(Image.open(blur_path).convert('RGB')), base=16)
+        sharp_img = crop_img(np.array(Image.open(sharp_path).convert('RGB')), base=16)
+
+        blur_tensor = self.toTensor(blur_img)
+        sharp_tensor = self.toTensor(sharp_img)
+
+        return [fname], blur_tensor, sharp_tensor
     
 
