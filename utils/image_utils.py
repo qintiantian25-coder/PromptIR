@@ -61,6 +61,8 @@ def crop_img(image, base=64):
     w = image.shape[1]
     crop_h = h % base
     crop_w = w % base
+    if image.ndim == 2:
+        return image[crop_h // 2:h - crop_h + crop_h // 2, crop_w // 2:w - crop_w + crop_w // 2]
     return image[crop_h // 2:h - crop_h + crop_h // 2, crop_w // 2:w - crop_w + crop_w // 2, :]
 
 
