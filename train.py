@@ -1,3 +1,4 @@
+import os
 import subprocess
 from tqdm import tqdm
 
@@ -92,19 +93,22 @@ def main():
     
     model = PromptIRModel()
     model.best_model_path = opt.best_model_path
+
+    best_model_dir = os.path.dirname(opt.best_model_path) or opt.ckpt_dir
+    best_model_name = os.path.splitext(os.path.basename(opt.best_model_path))[0] or 'best_model'
     
     # only save best model based on val_psnr; automatically overwrite when psnr improves
     callbacks = []
     if valloader is not None:
         best_model_callback = ModelCheckpoint(
-            dirpath=opt.ckpt_dir,
-            filename='best_model',
+            dirpath=best_model_dir,
+            filename=best_model_name,
             monitor='val_psnr',
             mode='max',
             save_top_k=1
         )
         callbacks.append(best_model_callback)
-        print(f'Best model will be saved to {opt.ckpt_dir}/best_model.ckpt (updated when PSNR improves)')
+        print(f'Best model will be saved to {opt.best_model_path} (updated when PSNR improves)')
     else:
         print('Warning: No validation dataset provided; no model will be saved')
     
