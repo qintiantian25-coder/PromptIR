@@ -26,6 +26,11 @@ share/python-wheels/
 *.egg
 MANIFEST
 /fangzhen.py
+# Weights & Biases
+wandb/
+*.wandb
+latest-run
+run-*.wandb
 
 # PyInstaller
 #  Usually these files are written by a python script from a template
