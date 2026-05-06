@@ -60,8 +60,22 @@ def compute_psnr_ssim(recoverd, clean):
     for i in range(recoverd.shape[0]):
         # psnr_val += compare_psnr(clean[i], recoverd[i])
         # ssim += compare_ssim(clean[i], recoverd[i], multichannel=True)
-        psnr += peak_signal_noise_ratio(clean[i], recoverd[i], data_range=1)
-        ssim += structural_similarity(clean[i], recoverd[i], data_range=1, channel_axis=-1)
+        ref = clean[i]
+        rec = recoverd[i]
+        # If last axis is channel and channels==1, squeeze to 2D for single-channel SSIM
+        if ref.ndim == 3 and ref.shape[2] == 1:
+            ref2 = ref[:, :, 0]
+            rec2 = rec[:, :, 0]
+            psnr += peak_signal_noise_ratio(ref2, rec2, data_range=1)
+            ssim += structural_similarity(ref2, rec2, data_range=1)
+        else:
+            # multi-channel case (or already 2D)
+            psnr += peak_signal_noise_ratio(ref, rec, data_range=1)
+            # structural_similarity: specify channel_axis only for >2D arrays
+            if ref.ndim == 3:
+                ssim += structural_similarity(ref, rec, data_range=1, channel_axis=-1)
+            else:
+                ssim += structural_similarity(ref, rec, data_range=1)
 
     return psnr / recoverd.shape[0], ssim / recoverd.shape[0], recoverd.shape[0]
 

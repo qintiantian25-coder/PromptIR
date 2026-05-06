@@ -61,7 +61,7 @@ class BestModelCheckpoint(ModelCheckpoint):
 class PromptIRModel(pl.LightningModule):
     def __init__(self):
         super().__init__()
-        self.net = PromptIR(decoder=True)
+        self.net = PromptIR(inp_channels=1, out_channels=1, decoder=True)
         self.loss_fn  = nn.L1Loss()
         self.best_psnr = 0.0
         self.best_model_path = None

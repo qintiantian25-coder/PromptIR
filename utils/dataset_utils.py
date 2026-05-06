@@ -142,7 +142,7 @@ class PromptTrainDataset(Dataset):
             elif de_id == 2:
                 clean_id = sample["clean_id"]
 
-            clean_img = crop_img(np.array(Image.open(clean_id).convert('RGB')), base=16)
+            clean_img = crop_img(np.array(Image.open(clean_id).convert('L')), base=16)
             clean_patch = self.crop_transform(clean_img)
             clean_patch= np.array(clean_patch)
 
@@ -154,14 +154,14 @@ class PromptTrainDataset(Dataset):
         else:
             if de_id == 3:
                 # Rain Streak Removal
-                degrad_img = crop_img(np.array(Image.open(sample["clean_id"]).convert('RGB')), base=16)
+                degrad_img = crop_img(np.array(Image.open(sample["clean_id"]).convert('L')), base=16)
                 clean_name = self._get_gt_name(sample["clean_id"])
-                clean_img = crop_img(np.array(Image.open(clean_name).convert('RGB')), base=16)
+                clean_img = crop_img(np.array(Image.open(clean_name).convert('L')), base=16)
             elif de_id == 4:
                 # Dehazing with SOTS outdoor training set
-                degrad_img = crop_img(np.array(Image.open(sample["clean_id"]).convert('RGB')), base=16)
+                degrad_img = crop_img(np.array(Image.open(sample["clean_id"]).convert('L')), base=16)
                 clean_name = self._get_nonhazy_name(sample["clean_id"])
-                clean_img = crop_img(np.array(Image.open(clean_name).convert('RGB')), base=16)
+                clean_img = crop_img(np.array(Image.open(clean_name).convert('L')), base=16)
 
             degrad_patch, clean_patch = random_augmentation(*self._crop_patch(degrad_img, clean_img))
 
@@ -213,8 +213,8 @@ class BlindPairedTrainDataset(Dataset):
         clean_path = os.path.join(self.clean_dir, fname)
         degrad_path = os.path.join(self.degrad_dir, fname)
 
-        clean_img = crop_img(np.array(Image.open(clean_path).convert('RGB')), base=16)
-        degrad_img = crop_img(np.array(Image.open(degrad_path).convert('RGB')), base=16)
+        clean_img = crop_img(np.array(Image.open(clean_path).convert('L')), base=16)
+        degrad_img = crop_img(np.array(Image.open(degrad_path).convert('L')), base=16)
 
         clean_patch, degrad_patch = self._crop_pair(clean_img, degrad_img)
 
@@ -266,7 +266,7 @@ class DenoiseTestDataset(Dataset):
         self.sigma = sigma
 
     def __getitem__(self, clean_id):
-        clean_img = crop_img(np.array(Image.open(self.clean_ids[clean_id]).convert('RGB')), base=16)
+        clean_img = crop_img(np.array(Image.open(self.clean_ids[clean_id]).convert('L')), base=16)
         clean_name = self.clean_ids[clean_id].split("/")[-1].split('.')[0]
 
         noisy_img, _ = self._add_gaussian_noise(clean_img)
@@ -351,10 +351,10 @@ class DerainDehazeDataset(Dataset):
         degraded_path = self.ids[idx]
         clean_path = self._get_gt_path(degraded_path)
 
-        degraded_img = crop_img(np.array(Image.open(degraded_path).convert('RGB')), base=16)
+        degraded_img = crop_img(np.array(Image.open(degraded_path).convert('L')), base=16)
         if self.addnoise:
             degraded_img,_ = self._add_gaussian_noise(degraded_img)
-        clean_img = crop_img(np.array(Image.open(clean_path).convert('RGB')), base=16)
+        clean_img = crop_img(np.array(Image.open(clean_path).convert('L')), base=16)
 
         clean_img, degraded_img = self.toTensor(clean_img), self.toTensor(degraded_img)
         degraded_name = degraded_path.split('/')[-1][:-4]
@@ -395,7 +395,7 @@ class TestSpecificDataset(Dataset):
         self.num_img = len(self.degraded_ids)
 
     def __getitem__(self, idx):
-        degraded_img = crop_img(np.array(Image.open(self.degraded_ids[idx]).convert('RGB')), base=16)
+        degraded_img = crop_img(np.array(Image.open(self.degraded_ids[idx]).convert('L')), base=16)
         name = self.degraded_ids[idx].split('/')[-1][:-4]
 
         degraded_img = self.toTensor(degraded_img)
@@ -446,7 +446,7 @@ class BlindPixelTestDataset(Dataset):
         self.num_img = len(self.degraded_ids)
 
     def __getitem__(self, idx):
-        degraded_img = crop_img(np.array(Image.open(self.degraded_ids[idx]).convert('RGB')), base=16)
+        degraded_img = crop_img(np.array(Image.open(self.degraded_ids[idx]).convert('L')), base=16)
         name = os.path.basename(self.degraded_ids[idx])[:-4]
 
         degraded_img = self.toTensor(degraded_img)
@@ -484,8 +484,8 @@ class ValidationDataset(Dataset):
         if not os.path.exists(blur_path) or not os.path.exists(sharp_path):
             raise FileNotFoundError(f'Missing pair for {fname}')
 
-        blur_img = crop_img(np.array(Image.open(blur_path).convert('RGB')), base=16)
-        sharp_img = crop_img(np.array(Image.open(sharp_path).convert('RGB')), base=16)
+        blur_img = crop_img(np.array(Image.open(blur_path).convert('L')), base=16)
+        sharp_img = crop_img(np.array(Image.open(sharp_path).convert('L')), base=16)
 
         blur_tensor = self.toTensor(blur_img)
         sharp_tensor = self.toTensor(sharp_img)

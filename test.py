@@ -25,7 +25,7 @@ from skimage.metrics import peak_signal_noise_ratio, structural_similarity
 class PromptIRModel(pl.LightningModule):
     def __init__(self):
         super().__init__()
-        self.net = PromptIR(decoder=True)
+        self.net = PromptIR(inp_channels=1, out_channels=1, decoder=True)
         self.loss_fn  = nn.L1Loss()
     
     def forward(self,x):
