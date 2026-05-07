@@ -55,6 +55,7 @@ def build_test_cmd(cfg):
     add_flag('cuda', test_cfg.get('cuda', None))
     add_flag('mode', test_cfg.get('mode', None))
     add_flag('dataset_path', paths.get('dataset_path', None))
+    add_flag('blind_dataset_path', paths.get('blind_dataset_path', None))
     add_flag('ckpt_name', test_cfg.get('ckpt_name', None))
     add_flag('output_path', paths.get('output_path', None))
 

@@ -116,6 +116,7 @@ if __name__ == '__main__':
     parser.add_argument('--output_path', type=str, default="output/", help='output save path')
     parser.add_argument('--ckpt_name', type=str, default="model.ckpt", help='checkpoint save path')
     parser.add_argument('--dataset_path', type=str, default='/home/student_server/Qtt/NAFNet/data', help='absolute dataset root path')
+    parser.add_argument('--blind_dataset_path', type=str, default='', help='absolute root path for blind-pixel test set (contains test_blur/test_sharp/test_mask)')
     testopt = parser.parse_args()
     
     
@@ -135,12 +136,13 @@ if __name__ == '__main__':
     denoise_tests = []
     derain_tests = []
 
-    # use absolute dataset path for test inputs
-    base_path = os.path.join(testopt.dataset_path, 'test_blur')
-    for i in denoise_splits:
-        testopt.denoise_path = os.path.join(base_path,i)
-        denoise_testset = DenoiseTestDataset(testopt)
-        denoise_tests.append(denoise_testset)
+    # Only prepare the datasets needed by the selected mode.
+    if testopt.mode in (0, 3):
+        base_path = os.path.join(testopt.dataset_path, 'test_blur')
+        for i in denoise_splits:
+            testopt.denoise_path = os.path.join(base_path, i)
+            denoise_testset = DenoiseTestDataset(testopt)
+            denoise_tests.append(denoise_testset)
 
 
     print("CKPT name : {}".format(ckpt_path))
@@ -427,7 +429,15 @@ if __name__ == '__main__':
     elif testopt.mode == 4:
         # Blind-pixel dataset testing: use test_blur (inputs), test_sharp (gt), test_mask (per-image csvs)
         print('Start blind-pixel dataset testing...')
-        blind_root = os.path.join(testopt.dataset_path, 'test_blur')
+        blind_root = testopt.blind_dataset_path.strip() or testopt.dataset_path
+        required_dirs = ['test_blur', 'test_sharp', 'test_mask']
+        missing_dirs = [d for d in required_dirs if not os.path.isdir(os.path.join(blind_root, d))]
+        if len(missing_dirs) > 0:
+            raise FileNotFoundError(
+                f'Blind-pixel dataset root is invalid: {blind_root}. Missing subdirectories: {missing_dirs}. '
+                f'Please set [paths] blind_dataset_path in experiment.cfg to the directory containing test_blur/test_sharp/test_mask.'
+            )
+        blind_root = os.path.join(blind_root, 'test_blur')
         blind_set = BlindPixelTestDataset(testopt, root=blind_root)
         test_Blind(net, blind_set, output_subdir='blind')
 
