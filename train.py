@@ -9,7 +9,6 @@ from torch.utils.data import DataLoader
 
 from utils.dataset_utils import PromptTrainDataset, BlindPairedTrainDataset, ValidationDataset
 from net.model import PromptIR
-from utils.schedulers import LinearWarmupCosineAnnealingLR
 from utils.val_utils import compute_psnr_ssim
 import numpy as np
 import wandb
@@ -59,12 +58,93 @@ class BestModelCheckpoint(ModelCheckpoint):
 
 
 class PromptIRModel(pl.LightningModule):
-    def __init__(self, inp_channels=1, out_channels=1):
+    def __init__(self, inp_channels=1, out_channels=1, encoder_lr=1e-6, decoder_lr=1e-5, freeze_encoder=True, max_epochs=200):
         super().__init__()
         self.net = PromptIR(inp_channels=inp_channels, out_channels=out_channels, decoder=True)
         self.loss_fn  = nn.L1Loss()
         self.best_psnr = 0.0
         self.best_model_path = None
+        self.encoder_lr = encoder_lr
+        self.decoder_lr = decoder_lr
+        self.freeze_encoder = freeze_encoder
+        self.max_epochs = max_epochs
+        self._encoder_prefixes = (
+            'patch_embed',
+            'encoder_level1',
+            'down1_2',
+            'reduce_noise_channel_1',
+            'encoder_level2',
+            'down2_3',
+            'reduce_noise_channel_2',
+            'encoder_level3',
+            'down3_4',
+            'reduce_noise_channel_3',
+        )
+        self._decoder_prefixes = (
+            'latent',
+            'prompt1',
+            'prompt2',
+            'prompt3',
+            'chnl_reduce1',
+            'chnl_reduce2',
+            'chnl_reduce3',
+            'up4_3',
+            'reduce_chan_level3',
+            'noise_level3',
+            'reduce_noise_level3',
+            'decoder_level3',
+            'up3_2',
+            'reduce_chan_level2',
+            'noise_level2',
+            'reduce_noise_level2',
+            'decoder_level2',
+            'up2_1',
+            'noise_level1',
+            'reduce_noise_level1',
+            'decoder_level1',
+            'refinement',
+            'output',
+        )
+
+    def _is_encoder_param(self, name):
+        return any(name.startswith(prefix) for prefix in self._encoder_prefixes)
+
+    def _is_decoder_param(self, name):
+        return any(name.startswith(prefix) for prefix in self._decoder_prefixes)
+
+    def freeze_encoder_modules(self):
+        for name, param in self.net.named_parameters():
+            if self._is_encoder_param(name):
+                param.requires_grad = False
+
+    def unfreeze_encoder_modules(self):
+        for name, param in self.net.named_parameters():
+            if self._is_encoder_param(name):
+                param.requires_grad = True
+
+    def _build_param_groups(self):
+        encoder_params = []
+        decoder_params = []
+        other_params = []
+
+        for name, param in self.net.named_parameters():
+            if not param.requires_grad:
+                continue
+            if self._is_encoder_param(name):
+                encoder_params.append(param)
+            elif self._is_decoder_param(name):
+                decoder_params.append(param)
+            else:
+                other_params.append(param)
+
+        param_groups = []
+        if len(encoder_params) > 0:
+            param_groups.append({'params': encoder_params, 'lr': self.encoder_lr})
+        if len(decoder_params) > 0:
+            param_groups.append({'params': decoder_params, 'lr': self.decoder_lr})
+        if len(other_params) > 0:
+            param_groups.append({'params': other_params, 'lr': self.decoder_lr})
+        return param_groups
     
     def forward(self,x):
         return self.net(x)
@@ -135,12 +215,26 @@ class PromptIRModel(pl.LightningModule):
             print(f"Current best checkpoint: {best_path} (score={best_score})")
     
     def lr_scheduler_step(self,scheduler,metric):
-        scheduler.step(self.current_epoch)
-        lr = scheduler.get_lr()
+        scheduler.step()
+        if hasattr(scheduler, 'get_last_lr'):
+            lr = scheduler.get_last_lr()
+        else:
+            lr = None
     
     def configure_optimizers(self):
-        optimizer = optim.AdamW(self.parameters(), lr=1e-5)
-        scheduler = LinearWarmupCosineAnnealingLR(optimizer=optimizer,warmup_epochs=15,max_epochs=150)
+        if self.freeze_encoder:
+            self.freeze_encoder_modules()
+
+        param_groups = self._build_param_groups()
+        if len(param_groups) == 0:
+            param_groups = [{'params': self.parameters(), 'lr': self.decoder_lr}]
+
+        optimizer = optim.AdamW(param_groups, betas=(0.9, 0.999), weight_decay=1e-4)
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer=optimizer,
+            T_max=max(1, self.max_epochs),
+            eta_min=0.0,
+        )
         return [optimizer],[scheduler]
 
 
@@ -170,19 +264,41 @@ def main():
         valloader = DataLoader(valset, batch_size=1, pin_memory=True, shuffle=False, num_workers=0)
         print(f'Validation set size: {len(valset)}')
     
-    # Detect pretrained checkpoint to initialize model channels
+    # Detect checkpoints:
+    # - resume_ckpt: full Lightning checkpoint with optimizer/scheduler state
+    # - init_ckpt: weight-only or fallback checkpoint used only for initialization
     resume_ckpt = None
-    candidate = os.path.join(opt.ckpt_dir, 'model.ckpt')
-    if os.path.exists(candidate):
-        resume_ckpt = candidate
-    elif getattr(opt, 'best_model_path', None) and os.path.exists(opt.best_model_path):
-        resume_ckpt = opt.best_model_path
+    init_ckpt = None
+    resume_candidates = []
+    if getattr(opt, 'resume_ckpt_path', None):
+        resume_candidates.append(opt.resume_ckpt_path)
+    resume_candidates.append(os.path.join(opt.ckpt_dir, 'last.ckpt'))
+    for candidate in resume_candidates:
+        if candidate and os.path.exists(candidate):
+            try:
+                ck = torch.load(candidate, map_location='cpu')
+                if isinstance(ck, dict) and 'optimizer_states' in ck and 'state_dict' in ck:
+                    resume_ckpt = candidate
+                    break
+                if init_ckpt is None:
+                    init_ckpt = candidate
+            except Exception:
+                if init_ckpt is None:
+                    init_ckpt = candidate
+
+    if init_ckpt is None:
+        candidate = os.path.join(opt.ckpt_dir, 'model.ckpt')
+        if os.path.exists(candidate):
+            init_ckpt = candidate
+        elif getattr(opt, 'best_model_path', None) and os.path.exists(opt.best_model_path):
+            init_ckpt = opt.best_model_path
 
     in_ch = 1
     out_ch = 1
-    if resume_ckpt is not None:
+    infer_ckpt = resume_ckpt or init_ckpt
+    if infer_ckpt is not None:
         try:
-            ck = torch.load(resume_ckpt, map_location='cpu')
+            ck = torch.load(infer_ckpt, map_location='cpu')
             sd = ck.get('state_dict', ck)
             for k, v in sd.items():
                 if 'patch_embed.proj.weight' in k:
@@ -192,13 +308,20 @@ def main():
         except Exception:
             pass
 
-    model = PromptIRModel(inp_channels=in_ch, out_channels=out_ch)
+    model = PromptIRModel(
+        inp_channels=in_ch,
+        out_channels=out_ch,
+        encoder_lr=opt.encoder_lr,
+        decoder_lr=opt.decoder_lr,
+        freeze_encoder=opt.freeze_encoder,
+        max_epochs=opt.epochs,
+    )
     model.best_model_path = opt.best_model_path
 
-    # If a resume checkpoint exists, load weights (ignore missing/unexpected)
-    if resume_ckpt is not None:
+    # If only a weight/init checkpoint exists, load weights manually.
+    if resume_ckpt is None and init_ckpt is not None:
         try:
-            ck = torch.load(resume_ckpt, map_location='cpu')
+            ck = torch.load(init_ckpt, map_location='cpu')
             state_dict = ck.get('state_dict', ck)
             model_sd = model.net.state_dict()
             new_sd = {}
@@ -223,9 +346,11 @@ def main():
                 print('Missing keys when loading resume checkpoint:', missing)
             if len(unexpected) > 0:
                 print('Unexpected keys when loading resume checkpoint:', unexpected)
-            print(f'Loaded pretrained weights from {resume_ckpt}')
+            print(f'Loaded pretrained weights from {init_ckpt}')
         except Exception as e:
             print('Failed to load resume checkpoint:', e)
+    elif resume_ckpt is not None:
+        print(f'Resuming full training state from {resume_ckpt}')
 
     best_model_dir = os.path.dirname(opt.best_model_path) or opt.ckpt_dir
     best_model_name = os.path.splitext(os.path.basename(opt.best_model_path))[0] or 'best_model'
@@ -265,8 +390,13 @@ def main():
         logger=logger,
         callbacks=callbacks,
         check_val_every_n_epoch=opt.val_interval,
+        gradient_clip_val=opt.grad_clip_val,
+        gradient_clip_algorithm='norm',
     )
-    trainer.fit(model=model, train_dataloaders=trainloader, val_dataloaders=valloader)
+    if resume_ckpt is not None:
+        trainer.fit(model=model, train_dataloaders=trainloader, val_dataloaders=valloader, ckpt_path=resume_ckpt)
+    else:
+        trainer.fit(model=model, train_dataloaders=trainloader, val_dataloaders=valloader)
 
 
 if __name__ == '__main__':
