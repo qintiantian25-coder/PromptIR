@@ -451,7 +451,9 @@ class BlindPixelTestDataset(Dataset):
 
         degraded_img = self.toTensor(degraded_img)
 
-        return [name], degraded_img, None
+        # return a dummy tensor (same shape) instead of None so DataLoader.collate works
+        dummy = torch.zeros_like(degraded_img)
+        return [name], degraded_img, dummy
 
     def __len__(self):
         return self.num_img
