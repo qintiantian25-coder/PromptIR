@@ -59,9 +59,9 @@ class BestModelCheckpoint(ModelCheckpoint):
 
 
 class PromptIRModel(pl.LightningModule):
-    def __init__(self):
+    def __init__(self, inp_channels=1, out_channels=1):
         super().__init__()
-        self.net = PromptIR(inp_channels=1, out_channels=1, decoder=True)
+        self.net = PromptIR(inp_channels=inp_channels, out_channels=out_channels, decoder=True)
         self.loss_fn  = nn.L1Loss()
         self.best_psnr = 0.0
         self.best_model_path = None
@@ -71,13 +71,33 @@ class PromptIRModel(pl.LightningModule):
     
     def training_step(self, batch, batch_idx):
         ([clean_name, de_id], degrad_patch, clean_patch) = batch
+
+        # Ensure input/output channel compatibility with model
+        model_in_ch = next(self.net.parameters()).shape[1]
+        model_out_ch = self.net.output.out_channels if hasattr(self.net, 'output') and hasattr(self.net.output, 'out_channels') else None
+
+        if degrad_patch.shape[1] != model_in_ch:
+            degrad_patch = degrad_patch.repeat(1, model_in_ch, 1, 1)
+
+        if model_out_ch is not None and clean_patch.shape[1] != model_out_ch:
+            clean_patch = clean_patch.repeat(1, model_out_ch, 1, 1)
+
         restored = self.net(degrad_patch)
-        loss = self.loss_fn(restored,clean_patch)
+        loss = self.loss_fn(restored, clean_patch)
         self.log("train_loss", loss)
         return loss
     
     def validation_step(self, batch, batch_idx):
         ([fname], degrad_patch, clean_patch) = batch
+
+        # Channel compatibility as in training
+        model_in_ch = next(self.net.parameters()).shape[1]
+        model_out_ch = self.net.output.out_channels if hasattr(self.net, 'output') and hasattr(self.net.output, 'out_channels') else None
+        if degrad_patch.shape[1] != model_in_ch:
+            degrad_patch = degrad_patch.repeat(1, model_in_ch, 1, 1)
+        if model_out_ch is not None and clean_patch.shape[1] != model_out_ch:
+            clean_patch = clean_patch.repeat(1, model_out_ch, 1, 1)
+
         restored = self.net(degrad_patch)
         psnr, ssim, _ = compute_psnr_ssim(restored, clean_patch)
         # 去掉 sync_dist=True 以让 ModelCheckpoint 正确读取指标
@@ -150,8 +170,62 @@ def main():
         valloader = DataLoader(valset, batch_size=1, pin_memory=True, shuffle=False, num_workers=0)
         print(f'Validation set size: {len(valset)}')
     
-    model = PromptIRModel()
+    # Detect pretrained checkpoint to initialize model channels
+    resume_ckpt = None
+    candidate = os.path.join(opt.ckpt_dir, 'model.ckpt')
+    if os.path.exists(candidate):
+        resume_ckpt = candidate
+    elif getattr(opt, 'best_model_path', None) and os.path.exists(opt.best_model_path):
+        resume_ckpt = opt.best_model_path
+
+    in_ch = 1
+    out_ch = 1
+    if resume_ckpt is not None:
+        try:
+            ck = torch.load(resume_ckpt, map_location='cpu')
+            sd = ck.get('state_dict', ck)
+            for k, v in sd.items():
+                if 'patch_embed.proj.weight' in k:
+                    in_ch = v.shape[1]
+                if k.endswith('.output.weight'):
+                    out_ch = v.shape[0]
+        except Exception:
+            pass
+
+    model = PromptIRModel(inp_channels=in_ch, out_channels=out_ch)
     model.best_model_path = opt.best_model_path
+
+    # If a resume checkpoint exists, load weights (ignore missing/unexpected)
+    if resume_ckpt is not None:
+        try:
+            ck = torch.load(resume_ckpt, map_location='cpu')
+            state_dict = ck.get('state_dict', ck)
+            model_sd = model.net.state_dict()
+            new_sd = {}
+            for k, v in state_dict.items():
+                newk = k
+                if newk.startswith('net.'):
+                    newk = newk[len('net.'):]
+                if newk.startswith('model.'):
+                    newk = newk[len('model.'):]
+                if newk in model_sd:
+                    new_sd[newk] = v
+                    continue
+                parts = newk.split('.')
+                for i in range(1, len(parts)):
+                    cand = '.'.join(parts[i:])
+                    if cand in model_sd:
+                        new_sd[cand] = v
+                        break
+
+            missing, unexpected = model.net.load_state_dict(new_sd, strict=False)
+            if len(missing) > 0:
+                print('Missing keys when loading resume checkpoint:', missing)
+            if len(unexpected) > 0:
+                print('Unexpected keys when loading resume checkpoint:', unexpected)
+            print(f'Loaded pretrained weights from {resume_ckpt}')
+        except Exception as e:
+            print('Failed to load resume checkpoint:', e)
 
     best_model_dir = os.path.dirname(opt.best_model_path) or opt.ckpt_dir
     best_model_name = os.path.splitext(os.path.basename(opt.best_model_path))[0] or 'best_model'
