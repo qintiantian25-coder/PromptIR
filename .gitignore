@@ -32,6 +32,7 @@ wandb/
 latest-run
 run-*.wandb
 ckpt/model.ckpt
+logs/
 
 # PyInstaller
 #  Usually these files are written by a python script from a template
