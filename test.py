@@ -145,7 +145,58 @@ if __name__ == '__main__':
 
     print("CKPT name : {}".format(ckpt_path))
 
-    net  = PromptIRModel().load_from_checkpoint(ckpt_path).cuda()
+    if not os.path.exists(ckpt_path):
+        raise FileNotFoundError(f'Checkpoint not found: {ckpt_path}')
+
+    ckpt = torch.load(ckpt_path, map_location='cpu')
+    state_dict = ckpt.get('state_dict', ckpt)
+
+    # infer expected input/output channels from checkpoint weights
+    in_ch = None
+    out_ch = None
+    for k, v in state_dict.items():
+        if 'patch_embed.proj.weight' in k:
+            # weight shape: (embed_dim, in_ch, kh, kw)
+            in_ch = v.shape[1]
+        if k.endswith('.output.weight'):
+            # output conv weight shape: (out_ch, in_ch, kh, kw)
+            out_ch = v.shape[0]
+
+    if in_ch is None:
+        in_ch = 3
+    if out_ch is None:
+        out_ch = in_ch
+
+    # instantiate model matching checkpoint channel dims
+    net = PromptIR(inp_channels=in_ch, out_channels=out_ch, decoder=True)
+
+    # adapt checkpoint keys (strip lightning/prefixes) and load
+    model_sd = net.state_dict()
+    new_sd = {}
+    for k, v in state_dict.items():
+        newk = k
+        if newk.startswith('net.'):
+            newk = newk[len('net.'):]
+        if newk.startswith('model.'):
+            newk = newk[len('model.'):]
+        if newk in model_sd:
+            new_sd[newk] = v
+            continue
+        # try to match by suffix
+        parts = newk.split('.')
+        for i in range(1, len(parts)):
+            cand = '.'.join(parts[i:])
+            if cand in model_sd:
+                new_sd[cand] = v
+                break
+
+    missing, unexpected = net.load_state_dict(new_sd, strict=False)
+    if len(missing) > 0:
+        print('Missing keys when loading checkpoint:', missing)
+    if len(unexpected) > 0:
+        print('Unexpected keys when loading checkpoint:', unexpected)
+
+    net = net.cuda()
     net.eval()
 
     def evaluate_blind_metrics(gt_dir, output_dir, input_dir=None, mask_dir=None, save_dir='.'):
@@ -313,8 +364,28 @@ if __name__ == '__main__':
         with torch.no_grad():
             for ([name], degrad_patch, _dummy) in tqdm(testloader):
                 degrad_patch = degrad_patch.cuda()
+
+                # If model expects multiple input channels but dataset gives single-channel,
+                # replicate channels to match model input.
+                try:
+                    model_first_param = next(net.parameters())
+                    model_in_ch = model_first_param.shape[1]
+                except StopIteration:
+                    model_in_ch = degrad_patch.shape[1]
+
+                if degrad_patch.shape[1] != model_in_ch:
+                    degrad_patch = degrad_patch.repeat(1, model_in_ch, 1, 1)
+
                 restored = net(degrad_patch)
-                save_image_tensor(restored, os.path.join(output_path, name[0] + '.png'))
+
+                # If model outputs multi-channel but target dataset is single-channel,
+                # reduce output to single channel by averaging channels.
+                if restored.shape[1] > 1:
+                    restored_single = restored.mean(dim=1, keepdim=True)
+                else:
+                    restored_single = restored
+
+                save_image_tensor(restored_single, os.path.join(output_path, name[0] + '.png'))
 
         print(f'Blind-pixel outputs saved to: {output_path}')
 
