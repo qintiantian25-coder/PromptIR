@@ -139,7 +139,7 @@ class PromptIRModel(pl.LightningModule):
         lr = scheduler.get_lr()
     
     def configure_optimizers(self):
-        optimizer = optim.AdamW(self.parameters(), lr=2e-4)
+        optimizer = optim.AdamW(self.parameters(), lr=1e-5)
         scheduler = LinearWarmupCosineAnnealingLR(optimizer=optimizer,warmup_epochs=15,max_epochs=150)
         return [optimizer],[scheduler]
 
